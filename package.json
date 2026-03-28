@@ -1,0 +1,34 @@
+{
+  "name": "@goposta/posta",
+  "version": "0.1.0",
+  "description": "Official Node.js client for the Posta email delivery platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "email",
+    "posta",
+    "smtp",
+    "api-client",
+    "transactional-email"
+  ],
+  "author": "Jonas Kaninda",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/goposta/posta-node"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.0.0"
+  }
+}
