@@ -1,8 +1,16 @@
 # Posta Node.js Client
 
-Official Node.js/TypeScript client for the [Posta](https://github.com/goposta/posta) email delivery platform.
+Official Node.js client for the [Posta](https://github.com/goposta/posta) email
+platform.
 
-Zero dependencies — uses the built-in `fetch` API (Node.js 18+).
+It covers the whole Posta API: transactional and templated sending, batch
+sends, address verification, templates with versions and localizations,
+campaigns, subscribers and lists, suppressions and bounces, domains, SMTP
+servers and relay credentials, webhooks, web forms and the messages they
+collect, inbound email, workspace administration, and the platform admin
+surface.
+
+Built on the runtime's own `fetch`, with no dependencies.
 
 ## Installation
 
@@ -10,137 +18,251 @@ Zero dependencies — uses the built-in `fetch` API (Node.js 18+).
 npm install @goposta/posta
 ```
 
-## Quick Start
+**Requires:** Node.js 18+
+
+## Quick start
 
 ```ts
 import { PostaClient } from '@goposta/posta';
 
-const client = new PostaClient('https://posta.example.com', 'your-api-key');
+const posta = new PostaClient('https://posta.example.com', 'psk_your_api_key');
 
-const resp = await client.sendEmail({
-  from: 'sender@example.com',
-  to: ['recipient@example.com'],
-  subject: 'Hello from Posta',
-  html: '<h1>Hello!</h1><p>This is a test email.</p>',
-});
-console.log(`Email sent: id=${resp.id} status=${resp.status}`);
-```
-
-## API Reference
-
-### Send Email
-
-```ts
-await client.sendEmail({
-  from: 'sender@example.com',
-  to: ['recipient@example.com'],
-  subject: 'Hello',
-  html: '<h1>Hello!</h1>',
-  text: 'Hello!',                                      // optional
-  attachments: [{                                       // optional
-    filename: 'doc.pdf',
-    content: '<base64-encoded>',
-    content_type: 'application/pdf',
-  }],
-  headers: { 'X-Custom': 'value' },                    // optional
-  list_unsubscribe_url: 'https://example.com/unsub',   // optional
-  send_at: '2026-03-25T10:00:00Z',                     // optional
-});
-```
-
-### Send Template Email
-
-```ts
-// By template ID (preferred — uses primary key index)
-await client.sendTemplateEmail({
-  template_id: 42,
+const resp = await posta.emails.send({
+  from: 'Acme <hello@example.com>',
   to: ['user@example.com'],
-  from: 'noreply@example.com',
-  template_data: { name: 'Alice' },
+  subject: 'Hello from Posta',
+  html: '<h1>Hello!</h1>',
 });
 
-// By template name (fallback)
-await client.sendTemplateEmail({
+console.log(`sent: id=${resp.id} status=${resp.status}`);
+```
+
+## Credentials
+
+Most machine-facing endpoints take an API key:
+
+```ts
+const posta = new PostaClient('https://posta.example.com', 'psk_...');
+```
+
+Account-level endpoints (`/users/me/*`) and the platform admin surface accept
+only a user session token — an API key is never a valid credential there:
+
+```ts
+const { token } = await new PostaClient(baseUrl, '').auth.login('admin@example.com', 'password');
+const admin = PostaClient.withToken(baseUrl, token);
+```
+
+### Workspaces
+
+Workspace-scoped endpoints resolve the active workspace from the
+`X-Posta-Workspace-Id` header. A workspace-bound API key already carries its
+workspace; an account-wide key or a user session must name one:
+
+```ts
+const posta = new PostaClient(baseUrl, apiKey, { workspaceId: 42 });
+```
+
+### API key scopes
+
+A key reaches only what its scopes allow. `send` covers the public send API;
+`read` and `write` cover reading and mutating workspace resources; `webhooks`
+covers webhook management; `admin` covers tenant administration (keys, members,
+settings); `*` grants everything.
+
+A 403 from an endpoint you expect to work usually means a missing scope —
+`err.isForbidden` distinguishes it.
+
+## Client options
+
+```ts
+const posta = new PostaClient(baseUrl, apiKey, {
+  timeout: 15_000,                          // ms, default 30000
+  workspaceId: 42,
+  userAgent: 'my-app/1.0',
+  headers: { 'X-Request-Source': 'batch-job' },
+  fetch: myFetch,                           // custom fetch, for tests or proxies
+});
+```
+
+## Resources
+
+| Property | Covers |
+|---|---|
+| `emails` | send, sendTemplate, sendBatch, preview, verify, status, retry, list, get |
+| `bounces` | list, record |
+| `suppressions` | list, add, remove |
+| `webhooks` | list, create, delete, deliveries |
+| `templates` | CRUD, versions, localizations, preview, sendTest, import/export |
+| `languages`, `stylesheets` | CRUD |
+| `domains` | add, list, get, verify, delete |
+| `smtpServers`, `smtpCredentials` | CRUD, test, revoke |
+| `subscribers` | CRUD, JSON and CSV bulk import |
+| `subscriberLists` | CRUD, members, segments, subscribe/unsubscribe/resubscribe |
+| `unsubscribeLists`, `contacts` | CRUD / read |
+| `campaigns` | CRUD, send, pause, resume, cancel, duplicate, messages, analytics |
+| `analytics` | emails, dashboard, providers, dashboardStats |
+| `forms` | CRUD, rotateKey, snippet, nonce, public submit |
+| `messages`, `messageFilters` | list, triage, reply, attachments; filter CRUD and dry-run |
+| `inbound` | list, get, retry, raw `.eml`, attachments |
+| `apiKeys` | create, list, get, revoke, delete |
+| `workspaces` | CRUD, members, invitations, settings, SSO, audit log, export/import, GDPR |
+| `users` | profile, password, 2FA, sessions, settings, notifications (session credential) |
+| `auth` | login, register, password reset, email verification, SSO discovery |
+| `admin` | users, plans, shared servers, domains, settings, announcements, events, metrics |
+| `system` | info, healthz, readyz |
+
+## Examples
+
+### Templated and batch sends
+
+```ts
+await posta.emails.sendTemplate({
   template: 'welcome',
   to: ['user@example.com'],
-  language: 'en',
-  template_data: { name: 'Alice' },
+  template_data: { name: 'Ada' },
 });
-```
 
-### Batch Send
-
-```ts
-await client.sendBatch({
-  template: 'newsletter',
-  from: 'news@example.com',
+const batch = await posta.emails.sendBatch({
+  template: 'welcome',
   recipients: [
-    { email: 'user1@example.com', template_data: { name: 'Bob' } },
-    { email: 'user2@example.com', language: 'fr', template_data: { name: 'Carol' } },
+    { email: 'a@example.com', template_data: { name: 'Ada' } },
+    { email: 'b@example.com', template_data: { name: 'Grace' } },
   ],
 });
+console.log(`${batch.sent} sent, ${batch.failed} failed`);
 ```
 
-### Preview Template
+Validate without sending:
 
 ```ts
-const preview = await client.previewTemplate({
-  template: 'welcome',
-  template_data: { name: 'Preview User' },
+const report = await posta.emails.sendDryRun(req);
+```
+
+### One-click unsubscribe
+
+Reference a Posta-managed unsubscribe list and Posta mints the signed one-click
+URL, recording opt-outs against that list alone:
+
+```ts
+await posta.emails.send({
+  from: 'news@example.com',
+  to: ['user@example.com'],
+  subject: 'This week',
+  html: '<p>…</p>',
+  unsubscribe: { list_id: 7 },
 });
-console.log(preview.subject, preview.html);
 ```
 
-### Check Delivery Status
+### Templates, versions, localizations
 
 ```ts
-const status = await client.getEmailStatus('email-uuid');
-console.log(`Status: ${status.status}`);
+const tpl = await posta.templates.create({ name: 'welcome', default_language: 'en' });
+const ver = await posta.templates.createVersion(tpl.id);
+await posta.templates.createLocalization(tpl.id, ver.id, {
+  language: 'en',
+  subject_template: 'Welcome, {{.name}}',
+  html_template: '<h1>Welcome, {{.name}}</h1>',
+});
+await posta.templates.activateVersion(tpl.id, ver.id);
 ```
 
-### Retry Failed Email
+### Campaigns
 
 ```ts
-const resp = await client.retryEmail('email-uuid');
-console.log(`Retried: status=${resp.status}`);
+const camp = await posta.campaigns.create({
+  name: 'Launch',
+  subject: "We're live",
+  from_email: 'news@example.com',
+  list_id: listId,
+  template_id: tpl.id,
+});
+await posta.campaigns.send(camp.id);
+
+const stats = await posta.campaigns.analytics(camp.id);
+console.log(`open rate ${stats.analytics?.open_rate}%`);
 ```
 
-## Error Handling
+### Paging
 
-All methods throw `PostaError` when the API returns a non-2xx status:
+`page` is zero-based; omitting `size` lets the server apply its default.
+
+```ts
+const page = await posta.emails.list({ page: 0, size: 50, q: 'user@example.com', sort: '-created_at' });
+console.log(page.pageable.total_elements);
+```
+
+### Verifying webhooks
+
+Posta signs each delivery with HMAC-SHA256 over the raw body, in the
+`X-Posta-Signature` header as `sha256=<hex>`. Verify against the exact bytes
+received — re-serializing the JSON changes them:
+
+```ts
+import express from 'express';
+import { verifySignature, WebhookEvents, type EmailEventPayload } from '@goposta/posta';
+
+const app = express();
+
+app.post('/hooks/posta', express.raw({ type: 'application/json' }), (req, res) => {
+  if (!verifySignature(req.body, req.header('X-Posta-Signature'), process.env.POSTA_WEBHOOK_SECRET!)) {
+    return res.status(401).send('bad signature');
+  }
+
+  const event = JSON.parse(req.body.toString()) as EmailEventPayload;
+  switch (event.event) {
+    case WebhookEvents.EmailSent:
+      console.log('delivered', event.email_id);
+      break;
+    case WebhookEvents.EmailFailed:
+      console.log('failed', event.email_id);
+      break;
+  }
+  res.sendStatus(200);
+});
+```
+
+Payload types: `EmailEventPayload`, `CampaignEventPayload`,
+`ComplaintEventPayload`, `UnsubscribeEventPayload`, `InboundEventPayload`,
+`MessageEventPayload` — or `WebhookPayload` to narrow on `event`.
+
+### Web forms
+
+```ts
+const form = await posta.forms.create({
+  name: 'Contact',
+  allowed_origins: ['https://example.com'],
+  strict_origin: true,
+  notify_emails: ['team@example.com'],
+});
+
+const snippet = await posta.forms.snippet(form.id);
+console.log(snippet.html);
+
+const inbox = await posta.messages.list({ state: 'new' });
+```
+
+## Errors
+
+Non-2xx responses reject with a `PostaError` carrying the status and the
+decoded error envelope:
 
 ```ts
 import { PostaError } from '@goposta/posta';
 
 try {
-  await client.getEmailStatus('invalid-uuid');
+  await posta.emails.send(req);
 } catch (err) {
   if (err instanceof PostaError) {
-    console.log(`Status: ${err.statusCode}`);
-    console.log(`Message: ${err.info?.message}`);
+    console.error(`posta ${err.statusCode}: ${err.info?.message}`);
+    if (err.isRateLimited) await retryLater();
   }
 }
 ```
 
-## Configuration
+Getters cover the common cases: `isNotFound`, `isUnauthorized`, `isForbidden`,
+`isRateLimited`.
 
-```ts
-const client = new PostaClient('https://posta.example.com', 'your-api-key', {
-  timeout: 10_000, // request timeout in ms (default: 30000)
-});
-```
-
-## Contributing
-
-Contributions are welcome! Please open an issue to discuss proposed changes before submitting a pull request.
-
----
 ## License
 
-This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
-
----
-
-## Copyright
-
-Copyright © 2026 Jonas Kaninda
+Apache-2.0
