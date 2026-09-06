@@ -1,7 +1,7 @@
 {
   "name": "@goposta/posta",
   "version": "0.1.0",
-  "description": "Official Node.js client for the Posta email delivery platform",
+  "description": "Official Node.js client for the Posta email platform",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [

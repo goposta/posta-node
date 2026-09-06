@@ -1,0 +1,106 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Pack and validate without publishing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: npm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Check the build output
+        run: |
+          set -euo pipefail
+          for f in dist/index.js dist/index.d.ts; do
+            if [ ! -s "$f" ]; then
+              echo "::error::build produced no $f"
+              exit 1
+            fi
+          done
+
+      - name: Resolve version and channel
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [ "$TAG_VERSION" != "$VERSION" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${VERSION}"
+              exit 1
+            fi
+          fi
+
+          # The client reports its own version in the User-Agent; keep it from
+          # drifting away from what was actually published.
+          CLIENT_VERSION="$(sed -n "s/^export const VERSION = '\(.*\)';$/\1/p" src/http.ts)"
+          if [ "$CLIENT_VERSION" != "$VERSION" ]; then
+            echo "::error::src/http.ts VERSION (${CLIENT_VERSION}) does not match package.json version (${VERSION})"
+            exit 1
+          fi
+
+          case "$VERSION" in
+            *-rc*)    DIST_TAG=rc ;;
+            *-beta*)  DIST_TAG=beta ;;
+            *-alpha*) DIST_TAG=alpha ;;
+            *-*)      DIST_TAG=next ;;
+            *)        DIST_TAG=latest ;;
+          esac
+
+          {
+            echo "VERSION=${VERSION}"
+            echo "DIST_TAG=${DIST_TAG}"
+          } >> "$GITHUB_ENV"
+          echo "Publishing ${VERSION} to dist-tag ${DIST_TAG}"
+
+      - name: Check the version is unpublished
+        # npm would reject a duplicate anyway, but its E403 reads like a
+        # credentials problem; fail here with the actual reason.
+        run: |
+          set -euo pipefail
+          NAME="$(node -p "require('./package.json').name")"
+          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "::error::${NAME}@${VERSION} is already published"
+            exit 1
+          fi
+
+      - name: Pack
+        run: npm pack --dry-run
+
+      - name: Publish
+        if: github.event_name == 'push' || inputs.dry-run == false
+        run: npm publish --provenance --access public --tag "${DIST_TAG}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

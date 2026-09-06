@@ -26,7 +26,7 @@ export const SIGNATURE_HEADER = 'X-Posta-Signature';
 export const WS = '/workspaces/current';
 
 /** Client library version, reported in the User-Agent header. */
-export const VERSION = '0.2.0';
+export const VERSION = '0.1.0';
 
 /** Error thrown when the Posta API returns a non-2xx status code. */
 export class PostaError extends Error {
